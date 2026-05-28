@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Playfair+Display:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Cormorant Garamond", "Playfair Display", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Custom continuous glowing animation for the galactic cosmic orbit */
+@keyframes cosmicSlowRotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-cosmic-orbit {
+  animation: cosmicSlowRotate 120s linear infinite;
+}
+
+@keyframes pulseGlowing {
+  0%, 100% {
+    box-shadow: 0 0 50px rgba(197, 163, 93, 0.08);
+  }
+  50% {
+    box-shadow: 0 0 90px rgba(197, 163, 93, 0.2);
+  }
+}
+
+.glowing-orbit {
+  animation: pulseGlowing 8s ease-in-out infinite;
+}
+
+#oracle-seal-desc {
+  font-family: Arial, sans-serif;
+  font-size: 11px;
+  text-align: center;
+}
+

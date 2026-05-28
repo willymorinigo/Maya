@@ -1,0 +1,6 @@
+{
+  "name": "Calendario Maya",
+  "description": "Herramienta interactiva para calcular tu Kin de nacimiento, sello solar, tono galáctico y el Oráculo del Destino con interpretaciones y consejos de la sabiduría maya.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

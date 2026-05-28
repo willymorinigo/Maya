@@ -34,6 +34,11 @@ if (api_key) {
   console.log("GEMINI_API_KEY not found in environment; running in offline/static reading mode.");
 }
 
+// Server-side cache of readings to prevent rate limit / quota exhaustion
+const serverReadingCache = new Map<string, { calculations: any; reading: any; mode: string }>();
+let lastQuotaExceededTime = 0; // Epoch timestamp of last 429 error
+const QUOTA_COOLDOWN_MS = 600000; // 10 minutes cooldown after hitting 429
+
 // -------------------------------------------------------------------------
 // Helper: Mayan Math
 // -------------------------------------------------------------------------
@@ -272,7 +277,33 @@ app.get("/api/mayan/reading", async (req, res) => {
     }
 
     const birthData = getKinFromDate(birthdate as string);
-    let currentData = getKinFromDate((currentdate as string) || new Date().toISOString().split("T")[0]);
+    const resolvedCurrentDateStr = (currentdate as string) || new Date().toISOString().split("T")[0];
+    const currentData = getKinFromDate(resolvedCurrentDateStr);
+
+    const cacheKey = `${birthdate}_${resolvedCurrentDateStr}`;
+
+    // 1. Check Server-side memory cache
+    if (serverReadingCache.has(cacheKey)) {
+      console.log(`[Cache Hit] Serving cached galactic reading for: ${cacheKey}`);
+      const cachedResult = serverReadingCache.get(cacheKey)!;
+      return res.json({
+        calculations: cachedResult.calculations,
+        reading: cachedResult.reading,
+        mode: cachedResult.mode
+      });
+    }
+
+    // 2. Check Cooldown period after hitting a 429 quota exception
+    const timeSinceQuotaError = Date.now() - lastQuotaExceededTime;
+    if (timeSinceQuotaError < QUOTA_COOLDOWN_MS) {
+      console.warn(`[Quota Protection] Bypassing Gemini API due to active cooldown. Serving astrology math fallback.`);
+      const staticRes = getStaticReading(birthData, currentData);
+      return res.json({
+        calculations: { birth: birthData, current: currentData },
+        reading: staticRes,
+        mode: "fallback-error"
+      });
+    }
 
     if (!ai) {
       // Graceful fallback if no Gemini credentials or load fails
@@ -335,6 +366,13 @@ DEBES responder estrictamente con un objeto JSON formateado según el siguiente 
     const responseText = result.text || "";
     const readingJson = JSON.parse(responseText);
 
+    // Save success in server cache
+    serverReadingCache.set(cacheKey, {
+      calculations: { birth: birthData, current: currentData },
+      reading: readingJson,
+      mode: "online"
+    });
+
     res.json({
       calculations: { birth: birthData, current: currentData },
       reading: readingJson,
@@ -342,7 +380,22 @@ DEBES responder estrictamente con un objeto JSON formateado según el siguiente 
     });
 
   } catch (error: any) {
-    console.error("Gemini call or parsing failed. Falling back to static reading.", error);
+    const errorMessage = error?.message || String(error) || "";
+    const errorStr = `${errorMessage} ${error?.status || ""} ${error?.stack || ""} ${JSON.stringify(error) || ""}`;
+    
+    const isQuotaError = errorStr.includes("429") || 
+                         errorStr.includes("RESOURCE_EXHAUSTED") || 
+                         errorStr.includes("quota") || 
+                         errorStr.includes("Quota");
+
+    if (isQuotaError) {
+      console.warn("[Quota Exhaustion Detected] Setting server-wide protection cooldown.");
+      lastQuotaExceededTime = Date.now();
+      console.log(`[Rate Limit Recovery] Serving robust static astrological fallback reading.`);
+    } else {
+      console.error("Gemini call or parsing failed. Falling back to static reading.", error);
+    }
+
     try {
       const { birthdate, currentdate } = req.query;
       const birthData = getKinFromDate(birthdate as string);

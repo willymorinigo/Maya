@@ -18,17 +18,33 @@ import {
 import SelloGlifo from "./components/SelloGlifo";
 import OraculoView from "./components/OraculoView";
 import { KinData, GeminiReading, TODOS_SELLOS } from "./types";
+import { getKinFromDate, getStaticReading } from "./utils/mayanMath";
 
 export default function App() {
   const [birthdate, setBirthdate] = useState("1990-08-15");
   const [currentdate, setCurrentdate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<{ birth: KinData; current: KinData } | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const [reading, setReading] = useState<GeminiReading | null>(null);
   const [readingMode, setReadingMode] = useState<"online" | "offline" | "fallback-error" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"portal" | "oraculo">("portal");
   const [showExplanation, setShowExplanation] = useState(false);
+
+  // Synchronous, guaranteed calculation of cosmic dates on the client
+  let birthData: KinData | null = null;
+  let currentData: KinData | null = null;
+  let staticReading: GeminiReading | null = null;
+
+  try {
+    birthData = getKinFromDate(birthdate);
+    currentData = getKinFromDate(currentdate);
+    staticReading = getStaticReading(birthData, currentData);
+  } catch (e) {
+    console.warn("Client side math failed:", e);
+  }
+
+  // Active combined reading for components
+  const activeReading = reading || staticReading;
 
   // Suggested famous dates of cosmic discovery/synchronicity
   const FAMOUS_DATES = [
@@ -38,10 +54,32 @@ export default function App() {
     { label: "Portal Convergencia Armónica", date: "1987-08-16" },
   ];
 
-  // Fetch full calculation & reading
+  // Fetch full calculation & reading in the background with local caching mechanisms
   const fetchReading = async (bDate: string, cDate: string) => {
-    setLoading(true);
+    setAiLoading(true);
     setError(null);
+
+    const cacheKey = `tzolkin_cache_${bDate}_${cDate}`;
+    
+    // Check local storage cache first
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.reading && parsed.mode) {
+          setReading(parsed.reading);
+          setReadingMode(parsed.mode);
+          // If we had a successful full online reading cached, we don't need to re-fetch
+          if (parsed.mode === "online") {
+            setAiLoading(false);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Error reading from local cache:", e);
+    }
+
     try {
       const response = await fetch(`/api/mayan/reading?birthdate=${bDate}&currentdate=${cDate}`);
       if (!response.ok) {
@@ -51,17 +89,25 @@ export default function App() {
       if (json.error) {
         throw new Error(json.error);
       }
-      setData({
-        birth: json.calculations.birth,
-        current: json.calculations.current,
-      });
       setReading(json.reading);
       setReadingMode(json.mode);
+
+      // Save to localStorage cache
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({
+          reading: json.reading,
+          mode: json.mode
+        }));
+      } catch (cacheErr) {
+        console.warn("Storage quota exceeded or private mode, failed to save local cache:", cacheErr);
+      }
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || "Unidentified cosmic misalignment.");
+      console.warn("Server reading failed, using premium local math fallback:", err);
+      // Fallback is already loaded via staticReading!
+      setReading(null);
+      setReadingMode("fallback-error");
     } finally {
-      setLoading(false);
+      setAiLoading(false);
     }
   };
 
@@ -143,15 +189,15 @@ export default function App() {
   };
 
   // Helper variables for birth
-  let birthSello = data?.birth?.sello;
-  let birthTono = data?.birth?.tono;
-  let birthKin = data?.birth?.kin;
+  let birthSello = birthData?.sello;
+  let birthTono = birthData?.tono;
+  let birthKin = birthData?.kin;
   let birthColor = birthSello ? getSelloColorDetails(birthSello.color) : getSelloColorDetails("amarillo");
 
   // Helper variables for current
-  let curSello = data?.current?.sello;
-  let curTono = data?.current?.tono;
-  let curKin = data?.current?.kin;
+  let curSello = currentData?.sello;
+  let curTono = currentData?.tono;
+  let curKin = currentData?.kin;
   let curColor = curSello ? getSelloColorDetails(curSello.color) : getSelloColorDetails("rojo");
 
   return (
@@ -232,21 +278,21 @@ export default function App() {
           <div className="space-y-6">
             <div className="flex items-center justify-between border-b border-[#2d2d2d] pb-4">
               <h3 className="text-[#c5a35d] text-xs uppercase tracking-[0.3em]">Interpretación</h3>
-              {readingMode && (
-                <span className="text-[9px] uppercase tracking-widest text-stone-500 font-mono px-2 py-0.5 border border-[#2d2d2d] rounded bg-[#101210]">
-                  ORÁCULO: {readingMode.toUpperCase()}
-                </span>
-              )}
+              <div className="flex flex-col items-end gap-1">
+                {readingMode && (
+                  <span className="text-[9px] uppercase tracking-widest text-[#c5a35d] font-mono px-2 py-0.5 border border-[#c5a35d]/40 rounded bg-[#101210]">
+                    MODO: {readingMode.toUpperCase()}
+                  </span>
+                )}
+                {aiLoading && (
+                  <span className="text-[8px] uppercase tracking-widest text-stone-500 font-mono flex items-center gap-1 animate-pulse">
+                    <RefreshCw className="w-2 h-2 animate-spin text-[#c5a35d]" /> Sintonizando...
+                  </span>
+                )}
+              </div>
             </div>
 
-            {loading ? (
-              <div className="space-y-4 py-8 animate-pulse" id="left-loading">
-                <div className="h-6 bg-stone-800 rounded w-2/3"></div>
-                <div className="h-4 bg-stone-800 rounded w-full"></div>
-                <div className="h-4 bg-stone-800 rounded w-full"></div>
-                <div className="h-4 bg-stone-800 rounded w-4/5"></div>
-              </div>
-            ) : birthSello && birthTono ? (
+            {birthSello && birthTono ? (
               <div className="space-y-6" id="left-loaded-content">
                 <div>
                   <p className="text-[#c5a35d] text-[10px] tracking-widest uppercase mb-1 font-mono">
@@ -259,21 +305,12 @@ export default function App() {
                     Arquetipo: {birthSello.arquetipo}
                   </p>
                   
-                  {reading?.interpretacionPersonalizada ? (
-                    <p 
-                      className="text-[#a19989] leading-relaxed whitespace-pre-line bg-[#101210]/60 p-4 border border-[#2d2d2d] rounded"
-                      style={{ fontSize: "13px", fontFamily: "Arial", lineHeight: "17.5px" }}
-                    >
-                      {reading.interpretacionPersonalizada.replace(/\*\*/g, "")}
-                    </p>
-                  ) : (
-                    <p 
-                      className="text-[#a19989] leading-relaxed"
-                      style={{ fontSize: "13px", fontFamily: "Arial", lineHeight: "17.5px" }}
-                    >
-                      {birthSello.descripcionCorta}
-                    </p>
-                  )}
+                  <p 
+                    className="text-[#a19989] leading-relaxed whitespace-pre-line bg-[#101210]/60 p-4 border border-[#2d2d2d] rounded"
+                    style={{ fontSize: "13px", fontFamily: "Arial", lineHeight: "17.5px" }}
+                  >
+                    {activeReading?.interpretacionPersonalizada?.replace(/\*\*/g, "") || birthSello.descripcionCorta}
+                  </p>
                 </div>
 
                 {/* Símbolos del sello */}
@@ -353,16 +390,7 @@ export default function App() {
 
           {/* Dynamic Render according to selection tab */}
           <div className="flex-1 w-full flex items-center justify-center py-6 min-h-[380px] z-10" id="middle-main-view">
-            {loading ? (
-              <div className="flex flex-col items-center gap-4 animate-pulse" id="middle-pulse-loading">
-                <div className="w-64 h-64 rounded-full border-4 border-dashed border-[#c5a35d]/40 flex items-center justify-center">
-                  <div className="w-48 h-48 rounded-full border border-[#2d2d2d] flex items-center justify-center">
-                    <RefreshCw className="w-10 h-10 text-[#c5a35d] animate-spin" />
-                  </div>
-                </div>
-                <span className="text-xs uppercase tracking-widest text-[#c5a35d] font-mono">Trazando alineaciones...</span>
-              </div>
-            ) : activeTab === "portal" ? (
+            {activeTab === "portal" ? (
               birthSello && birthTono ? (
                 <div className="relative flex flex-col items-center justify-center" id="glowing-portal-sello">
                   
@@ -382,8 +410,8 @@ export default function App() {
                 </div>
               ) : null
             ) : (
-              data?.birth?.oraculo ? (
-                <OraculoView oraculo={data.birth.oraculo} title="Tus Energías de la Quinta Fuerza" />
+              birthData?.oraculo ? (
+                <OraculoView key={birthData.kin} oraculo={birthData.oraculo} title="Tus Energías de la Quinta Fuerza" />
               ) : null
             )}
           </div>
@@ -399,7 +427,7 @@ export default function App() {
                   {birthSello.nombreMaya} · {birthSello.direccion} · {birthSello.color}
                 </p>
                 <p className="text-stone-500 text-[10px] tracking-widest uppercase mt-1 font-sans">
-                  Elemento: {birthColor.element} · Onda Encantada del {data?.birth?.ondaEncantadaSello.nombre}
+                  Elemento: {birthColor.element} · Onda Encantada del {birthData?.ondaEncantadaSello.nombre}
                 </p>
               </>
             ) : null}
@@ -435,14 +463,8 @@ export default function App() {
           <div id="todays-planetary-energy">
             <h3 className="text-[#c5a35d] text-xs uppercase tracking-[0.3em] mb-4">Sintonía del Día</h3>
             
-            {loading ? (
-              <div className="h-28 bg-[#101210] border border-[#2d2d2d] rounded animate-pulse p-4">
-                <div className="h-4 bg-stone-800 rounded w-1/3 mb-4"></div>
-                <div className="h-3 bg-stone-800 rounded w-full"></div>
-                <div className="h-3 bg-stone-800 rounded w-4/5 pt-2"></div>
-              </div>
-            ) : curSello && curTono ? (
-              <div className="bg-[#151715] border border-[#333] p-5 rounded relative overflow-hidden" id="transit-energy-card">
+            {curSello && curTono ? (
+              <div className="bg-[#151715] border border-[#2d2d2d] p-5 rounded relative overflow-hidden" id="transit-energy-card">
                 <div className="flex justify-between items-start mb-2">
                   <div>
                     <span className="text-[10px] uppercase font-mono text-[#c5a35d] tracking-widest block">
@@ -452,7 +474,7 @@ export default function App() {
                       {curSello.nombre} {curTono.nombre}
                     </p>
                   </div>
-                  <span className="text-xs font-mono font-bold bg-[#1e201e] border border-[#333] px-2 py-1 rounded text-stone-300">
+                  <span className="text-xs font-mono font-bold bg-[#1e201e] border border-[#2d2d2d] px-2 py-1 rounded text-[#c5a35d]">
                     KIN {curKin}
                   </span>
                 </div>
@@ -460,8 +482,8 @@ export default function App() {
                 <div className="w-full h-[1px] bg-[#2d2d2d] my-3"></div>
 
                 <p className="text-xs text-stone-400 leading-relaxed italic">
-                  {reading?.energiaDelDia 
-                    ? reading.energiaDelDia 
+                  {activeReading?.energiaDelDia 
+                    ? activeReading.energiaDelDia 
                     : `Sintoniza con las cualidades del sello ${curSello.nombre}. Hoy es un día idóneo para sintonizarse bajo la acción de ${curSello.accion} y dejar florecer la esencia del tono ${curTono.nombre}.`
                   }
                 </p>
@@ -480,35 +502,28 @@ export default function App() {
           <div className="flex-1 flex flex-col justify-end" id="spiritual-advice-block">
             <h3 className="text-[#c5a35d] text-xs uppercase tracking-[0.3em] mb-4">Guía y Sincronicidad</h3>
             
-            {loading ? (
-              <div className="space-y-2 py-4 animate-pulse">
-                <div className="h-3 bg-stone-800 rounded w-full"></div>
-                <div className="h-3 bg-stone-800 rounded w-5/6"></div>
-              </div>
-            ) : (
-              <div className="relative pl-6" id="spiritual-advice-holder">
-                <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-[#c5a35d]"></div>
-                
-                {reading?.misionDeVida ? (
-                  <>
-                    <p className="text-xs uppercase tracking-widest text-stone-500 mb-1 font-mono">Consejo de Vida</p>
-                    <p className="text-base text-stone-300 leading-relaxed italic mb-4">
-                      {reading.misionDeVida.substring(0, 190).replace(/\*\*/g, "")}...
-                    </p>
-                  </>
-                ) : (
+            <div className="relative pl-6" id="spiritual-advice-holder">
+              <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-[#c5a35d]"></div>
+              
+              {activeReading?.misionDeVida ? (
+                <>
+                  <p className="text-xs uppercase tracking-widest text-stone-500 mb-1 font-mono">Consejo de Vida</p>
                   <p className="text-base text-stone-300 leading-relaxed italic mb-4">
-                    "Hoy, expande tu mirada cósmica. Eleva tus intenciones por encima del laberinto material; vuela de prisa pero alto para ver los portales y senderos divinos que siempre estuvieron allí."
+                    {activeReading.misionDeVida.substring(0, 190).replace(/\*\*/g, "")}...
                   </p>
-                )}
+                </>
+              ) : (
+                <p className="text-base text-stone-300 leading-relaxed italic mb-4">
+                  "Hoy, expande tu mirada cósmica. Eleva tus intenciones por encima del laberinto material; vuela de prisa pero alto para ver los portales y senderos divinos que siempre estuvieron allí."
+                </p>
+              )}
 
-                {reading?.prediccionSincronicidad && (
-                  <p className="text-[11px] text-[#c5a35d] leading-normal font-sans italic bg-[#101210]/40 p-3 border border-[#2d2d2d] rounded">
-                    Sincronía: {reading.prediccionSincronicidad}
-                  </p>
-                )}
-              </div>
-            )}
+              {activeReading?.prediccionSincronicidad ? (
+                <p className="text-[11px] text-[#c5a35d] leading-normal font-sans italic bg-[#101210]/40 p-3 border border-[#2d2d2d] rounded">
+                  Sincronía: {activeReading.prediccionSincronicidad}
+                </p>
+              ) : null}
+            </div>
             
             {/* Horizontal decoration block columns */}
             <div className="grid grid-cols-4 gap-1 mt-6 opacity-40" id="cosmic-decoration-bars">

@@ -5,6 +5,7 @@ import { Sello, OraculoDestino } from "../types";
 interface OraculoViewProps {
   oraculo: OraculoDestino;
   title?: string;
+  key?: number;
 }
 
 export default function OraculoView({ oraculo, title = "Oráculo del Destino" }: OraculoViewProps) {
